@@ -1,0 +1,30 @@
+{
+  "excluded_resources": {
+    "all_regions": {
+      "ec2_instances": [
+        "i-1234567890abcdef0",
+        "i-0987654321fedcba0"
+      ],
+      "s3_buckets": [
+        "my-important-bucket",
+        "company-backups"
+      ]
+    },
+    "us-east-1": {
+      "lambda_functions": [
+        "critical-function-us-east-1"
+      ],
+      "rds_instances": [
+        "production-db"
+      ]
+    },
+    "eu-west-1": {
+      "ec2_instances": [
+        "i-example123"
+      ],
+      "s3_buckets": [
+        "eu-backup-bucket"
+      ]
+    }
+  }
+}

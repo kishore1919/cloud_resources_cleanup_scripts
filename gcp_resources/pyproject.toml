@@ -1,0 +1,15 @@
+[project]
+name = "gcp-resources"
+version = "0.1.0"
+description = "Tools for managing GCP resources"
+readme = "gcp_resources/README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "google-cloud-compute>=1.9.0",
+    "google-cloud-resource-manager>=1.6.0",
+    "google-auth>=2.23.0"
+]
+
+[project.scripts]
+gcp-resource-lister = "gcp_resources.gcp_resource_lister:main"
+gcp-resource-tool = "gcp_resources.gcp_resource_tool:main"
