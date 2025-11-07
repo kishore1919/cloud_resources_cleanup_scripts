@@ -51,6 +51,18 @@ python main.py gcp list --project my-project-id --vpcs-only
 
 # List only reserved IPs
 python main.py gcp list --project my-project-id --ips-only
+
+# List only snapshots
+python main.py gcp list --project my-project-id --snapshots-only
+
+# List only disks
+python main.py gcp list --project my-project-id --disks-only
+
+# List only storage buckets
+python main.py gcp list --project my-project-id --storage-only
+
+# List only Cloud Run services
+python main.py gcp list --project my-project-id --cloudrun-only
 ```
 
 ### Resource Details
@@ -60,6 +72,10 @@ The script provides detailed information for each resource type:
 - **Compute Instances**: Name, zone, status, machine type, internal IPs, external IPs
 - **VPC Networks**: Name, routing mode, number of subnets, description
 - **Reserved IPs**: Name, IP address, region, status, type, purpose
+- **Persistent Disks**: Name, zone, size (GB), type, status, labels
+- **Snapshots**: Name, status, source disk, storage size, labels
+- **Storage Buckets**: Name, location, storage class, creation date, labels
+- **Cloud Run Services**: Name, location, status, URL, creation date
 
 ### Using the GCP resource tool directly:
 ```bash
@@ -83,4 +99,5 @@ The script uses Google Cloud Application Default Credentials (ADC). You can auth
 
 - Python 3.13+
 - Google Cloud SDK for authentication
+- Google Cloud libraries: `google-cloud-compute`, `google-cloud-resource-manager`, `google-cloud-storage`, `google-cloud-run`
 - Proper IAM permissions to list resources in the target GCP project
