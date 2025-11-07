@@ -9,6 +9,9 @@ This repository contains various utility scripts for cloud resource management.
   - `gcp_resource_lister.py` - Lists GCP resources (instances, VPCs, reserved IPs)
   - `gcp_resource_tool.py` - Wrapper for GCP resource management tools
 - `aws-resource-cleaner/` - Directory containing AWS resource management tools
+  - `aws_resource_cleaner.py` - Deletes AWS resources region by region, skipping defaults
+  - `aws_resource_lister.py` - Lists AWS resources and exports to CSV
+- `aws_cleaup.toml` - TOML configuration file for AWS cleanup settings (regions and resources to enable/disable)
 
 ## Setup
 
@@ -29,6 +32,8 @@ For GCP scripts, you'll need to authenticate with Google Cloud:
 ```bash
 gcloud auth application-default login
 ```
+
+For AWS scripts, ensure your AWS credentials are configured (e.g., via AWS CLI or environment variables).
 
 ## Usage
 
@@ -87,17 +92,106 @@ Or run the package as a module:
 python -m gcp_resources list --project my-project-id
 ```
 
+### AWS Resource Cleaner
+
+The AWS resource cleaner deletes resources across regions, skipping default resources by default. It supports various AWS services and requires confirmation for each deletion.
+
+#### Clean all resources in all regions (skipping defaults):
+```bash
+python -m aws_resource_cleaner.aws_resource_cleaner
+```
+
+#### Clean specific resource types:
+```bash
+python -m aws_resource_cleaner.aws_resource_cleaner -r ec2_instances -r s3_buckets
+```
+
+#### Clean in specific regions:
+```bash
+python -m aws_resource_cleaner.aws_resource_cleaner --regions us-east-1 us-west-2
+```
+
+#### Dry run (show what would be deleted without deleting):
+```bash
+python -m aws_resource_cleaner.aws_resource_cleaner --dry-run
+```
+
+#### Include default resources (not recommended):
+```bash
+python -m aws_resource_cleaner.aws_resource_cleaner --no-skip-defaults
+```
+
+Supported resource types: ec2_instances, ec2_volumes, ec2_snapshots, s3_buckets, lambda_functions, rds_instances, ecs_clusters, elb, nat_gateways, eips, security_groups, vpcs, kms_keys
+
+### AWS Resource Lister
+
+The AWS resource lister enumerates resources across regions and exports to CSV.
+
+#### List all resources in all regions:
+```bash
+python -m aws_resource_cleaner.aws_resource_lister
+```
+
+#### List specific resource types:
+```bash
+python -m aws_resource_cleaner.aws_resource_lister -r ec2_instances -r s3_buckets
+```
+
+#### List in specific regions:
+```bash
+python -m aws_resource_cleaner.aws_resource_lister --regions us-east-1 us-west-2
+```
+
+#### Export to custom CSV file:
+```bash
+python -m aws_resource_cleaner.aws_resource_lister -o my_resources.csv
+```
+
+## Configuration
+
+### AWS Cleanup Configuration
+
+Use `aws_cleaup.toml` to control which regions and resources to process:
+
+```toml
+[resources]
+mgn = true
+ecs = true
+rds = true
+elb = true
+ec2_instances = true
+ec2_other = true
+security_groups = true
+vpcs = true
+kms = true
+
+[regions]
+us-east-1 = true
+us-east-2 = true
+# Set to false to skip a region
+ap-southeast-1 = false
+```
+
 ## Authentication
 
+### GCP
 The script uses Google Cloud Application Default Credentials (ADC). You can authenticate in several ways:
 
 1. Use `gcloud auth application-default login` for local development
 2. Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to point to a service account key file
 3. Run in a GCP environment (like Cloud Shell or a GCE instance) with appropriate service account
 
+### AWS
+Ensure AWS credentials are configured via:
+- AWS CLI (`aws configure`)
+- Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`)
+- IAM roles (for EC2 instances)
+
 ## Requirements
 
 - Python 3.13+
-- Google Cloud SDK for authentication
-- Google Cloud libraries: `google-cloud-compute`, `google-cloud-resource-manager`, `google-cloud-storage`, `google-cloud-run`
-- Proper IAM permissions to list resources in the target GCP project
+- Google Cloud SDK for GCP authentication
+- AWS CLI for AWS authentication
+- GCP libraries: `google-cloud-compute`, `google-cloud-resource-manager`, `google-cloud-storage`, `google-cloud-run`
+- AWS libraries: `boto3`
+- Proper IAM permissions to list/delete resources in the target cloud accounts

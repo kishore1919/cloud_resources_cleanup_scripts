@@ -18,11 +18,12 @@ class AWSResourceCleaner:
     A class to clean AWS resources region by region with configurable preservation rules
     """
     
-    def __init__(self, config_file: str = "config.json", skip_defaults: bool = True):
+    def __init__(self, config_file: str = "config.json", skip_defaults: bool = True, dry_run: bool = False):
         self.config_file = config_file
         self.config = self.load_config()
         self.excluded_resources = self.config.get("excluded_resources", {})
         self.skip_defaults = skip_defaults
+        self.dry_run = dry_run
         
     def load_config(self) -> Dict:
         """Load configuration from a file"""
@@ -45,8 +46,13 @@ class AWSResourceCleaner:
         all_regions_preserved = self.excluded_resources.get("all_regions", {}).get(resource_type, [])
         return set(region_preserved + all_regions_preserved)
     
-    def ask_confirmation(self, resource_type: str, resource_id: str, region: str) -> bool:
+    def ask_confirmation(self, resource_type: str, resource_id: str, region: str, dry_run: bool = None) -> bool:
         """Ask for confirmation before deleting a resource"""
+        if dry_run is None:
+            dry_run = self.dry_run
+        if dry_run or not sys.stdin.isatty():
+            logger.info(f"Skipping {resource_type} {resource_id} in {region} (dry-run or non-interactive)")
+            return False
         while True:
             response = input(f"Delete {resource_type} {resource_id} in {region}? (y/n): ").lower().strip()
             if response == 'y':
@@ -71,14 +77,14 @@ class AWSResourceCleaner:
             for instance in instances:
                 if instance.id not in preserved_instances:
                     if instance.state['Name'] not in ['terminated', 'terminating']:
-                        if self.ask_confirmation("EC2 Instance", instance.id, region):
+                        if self.ask_confirmation("EC2 Instance", instance.id, region, self.dry_run):
                             logger.info(f"Terminating EC2 instance: {instance.id}")
                             try:
                                 instance.terminate()
                             except Exception as e:
                                 logger.error(f"Error terminating instance {instance.id}: {e}")
-                else:
-                    logger.info(f"Skipping preserved EC2 instance: {instance.id}")
+                    else:
+                        logger.info(f"Skipping EC2 instance {instance.id} (already {instance.state['Name']})")
         except Exception as e:
             logger.error(f"Error processing EC2 instances in region {region}: {e}")
     
@@ -97,14 +103,14 @@ class AWSResourceCleaner:
             for volume in volumes:
                 if volume.id not in preserved_volumes:
                     if volume.state == 'available':
-                        if self.ask_confirmation("EC2 Volume", volume.id, region):
+                        if self.ask_confirmation("EC2 Volume", volume.id, region, self.dry_run):
                             logger.info(f"Deleting EC2 volume: {volume.id}")
                             try:
                                 volume.delete()
                             except Exception as e:
                                 logger.error(f"Error deleting volume {volume.id}: {e}")
-                else:
-                    logger.info(f"Skipping preserved EC2 volume: {volume.id}")
+                    else:
+                        logger.info(f"Skipping EC2 volume {volume.id} (state: {volume.state})")
         except Exception as e:
             logger.error(f"Error processing EC2 volumes in region {region}: {e}")
     
@@ -123,7 +129,7 @@ class AWSResourceCleaner:
             for snapshot in snapshots:
                 snapshot_id = snapshot['SnapshotId']
                 if snapshot_id not in preserved_snapshots:
-                    if self.ask_confirmation("EC2 Snapshot", snapshot_id, region):
+                    if self.ask_confirmation("EC2 Snapshot", snapshot_id, region, self.dry_run):
                         logger.info(f"Deleting EC2 snapshot: {snapshot_id}")
                         try:
                             ec2_client.delete_snapshot(SnapshotId=snapshot_id)
@@ -149,7 +155,7 @@ class AWSResourceCleaner:
             for bucket in buckets:
                 bucket_name = bucket['Name']
                 if bucket_name not in preserved_buckets:
-                    if self.ask_confirmation("S3 Bucket", bucket_name, region):
+                    if self.ask_confirmation("S3 Bucket", bucket_name, region, self.dry_run):
                         logger.info(f"Deleting S3 bucket: {bucket_name}")
                         try:
                             # First, delete all objects in the bucket
@@ -186,7 +192,7 @@ class AWSResourceCleaner:
             for function in response['Functions']:
                 function_name = function['FunctionName']
                 if function_name not in preserved_functions:
-                    if self.ask_confirmation("Lambda Function", function_name, region):
+                    if self.ask_confirmation("Lambda Function", function_name, region, self.dry_run):
                         logger.info(f"Deleting Lambda function: {function_name}")
                         try:
                             lambda_client.delete_function(FunctionName=function_name)
@@ -212,7 +218,7 @@ class AWSResourceCleaner:
             for instance in response['DBInstances']:
                 instance_id = instance['DBInstanceIdentifier']
                 if instance_id not in preserved_instances:
-                    if self.ask_confirmation("RDS Instance", instance_id, region):
+                    if self.ask_confirmation("RDS Instance", instance_id, region, self.dry_run):
                         logger.info(f"Deleting RDS instance: {instance_id}")
                         try:
                             # Skip deletion if it's a cluster member
@@ -242,13 +248,13 @@ class AWSResourceCleaner:
             for cluster_arn in clusters:
                 services = ecs_client.list_services(cluster=cluster_arn)['serviceArns']
                 for service_arn in services:
-                    if self.ask_confirmation("ECS Service", service_arn, region):
+                    if self.ask_confirmation("ECS Service", service_arn, region, self.dry_run):
                         try:
                             ecs_client.update_service(cluster=cluster_arn, service=service_arn, desiredCount=0)
                             ecs_client.delete_service(cluster=cluster_arn, service=service_arn, force=True)
                         except Exception as e:
                             logger.error(f"Error deleting ECS service {service_arn}: {e}")
-                if self.ask_confirmation("ECS Cluster", cluster_arn, region):
+                if self.ask_confirmation("ECS Cluster", cluster_arn, region, self.dry_run):
                     try:
                         ecs_client.delete_cluster(cluster=cluster_arn)
                     except Exception as e:
@@ -265,13 +271,13 @@ class AWSResourceCleaner:
         
         try:
             for lb in elbv2_client.describe_load_balancers()['LoadBalancers']:
-                if self.ask_confirmation("ELBv2", lb['LoadBalancerArn'], region):
+                if self.ask_confirmation("ELBv2", lb['LoadBalancerArn'], region, self.dry_run):
                     try:
                         elbv2_client.delete_load_balancer(LoadBalancerArn=lb['LoadBalancerArn'])
                     except Exception as e:
                         logger.error(f"Error deleting ELBv2 {lb['LoadBalancerArn']}: {e}")
             for lb in elbv1_client.describe_load_balancers()['LoadBalancerDescriptions']:
-                if self.ask_confirmation("ELBv1", lb['LoadBalancerName'], region):
+                if self.ask_confirmation("ELBv1", lb['LoadBalancerName'], region, self.dry_run):
                     try:
                         elbv1_client.delete_load_balancer(LoadBalancerName=lb['LoadBalancerName'])
                     except Exception as e:
@@ -288,7 +294,7 @@ class AWSResourceCleaner:
         try:
             nats = ec2_client.describe_nat_gateways(Filters=[{'Name': 'state', 'Values': ['available', 'pending']}])['NatGateways']
             for nat in nats:
-                if self.ask_confirmation("NAT Gateway", nat['NatGatewayId'], region):
+                if self.ask_confirmation("NAT Gateway", nat['NatGatewayId'], region, self.dry_run):
                     try:
                         ec2_client.delete_nat_gateway(NatGatewayId=nat['NatGatewayId'])
                     except Exception as e:
@@ -306,7 +312,7 @@ class AWSResourceCleaner:
             eips = ec2_client.describe_addresses()['Addresses']
             for eip in eips:
                 if 'AssociationId' not in eip:
-                    if self.ask_confirmation("Elastic IP", eip['PublicIp'], region):
+                    if self.ask_confirmation("Elastic IP", eip['PublicIp'], region, self.dry_run):
                         try:
                             ec2_client.release_address(AllocationId=eip['AllocationId'])
                         except Exception as e:
@@ -324,7 +330,7 @@ class AWSResourceCleaner:
             for sg in ec2_resource.security_groups.all():
                 if self.skip_defaults and sg.group_name == 'default':
                     continue
-                if self.ask_confirmation("Security Group", f"{sg.id} ({sg.group_name})", region):
+                if self.ask_confirmation("Security Group", f"{sg.id} ({sg.group_name})", region, self.dry_run):
                     try:
                         sg.delete()
                     except Exception as e:
@@ -345,7 +351,7 @@ class AWSResourceCleaner:
                     continue
                 # Clean dependencies first
                 self.clean_vpc_dependencies(ec2_client, vpc.id, region)
-                if self.ask_confirmation("VPC", vpc.id, region):
+                if self.ask_confirmation("VPC", vpc.id, region, self.dry_run):
                     try:
                         vpc.delete()
                     except Exception as e:
@@ -360,7 +366,7 @@ class AWSResourceCleaner:
         for subnet in subnets:
             if self.skip_defaults and subnet.get('DefaultForAz'):
                 continue
-            if self.ask_confirmation("Subnet", subnet['SubnetId'], region):
+            if self.ask_confirmation("Subnet", subnet['SubnetId'], region, self.dry_run):
                 try:
                     client.delete_subnet(SubnetId=subnet['SubnetId'])
                 except Exception as e:
@@ -369,7 +375,7 @@ class AWSResourceCleaner:
         # Delete IGWs
         igws = client.describe_internet_gateways(Filters=[{'Name': 'attachment.vpc-id', 'Values': [vpc_id]}])['InternetGateways']
         for igw in igws:
-            if self.ask_confirmation("Internet Gateway", igw['InternetGatewayId'], region):
+            if self.ask_confirmation("Internet Gateway", igw['InternetGatewayId'], region, self.dry_run):
                 try:
                     client.detach_internet_gateway(InternetGatewayId=igw['InternetGatewayId'], VpcId=vpc_id)
                     client.delete_internet_gateway(InternetGatewayId=igw['InternetGatewayId'])
@@ -381,7 +387,7 @@ class AWSResourceCleaner:
         for rt in rts:
             if any(assoc.get('Main') for assoc in rt.get('Associations', [])):
                 continue
-            if self.ask_confirmation("Route Table", rt['RouteTableId'], region):
+            if self.ask_confirmation("Route Table", rt['RouteTableId'], region, self.dry_run):
                 try:
                     for assoc in rt.get('Associations', []):
                         if not assoc.get('Main'):
@@ -395,7 +401,7 @@ class AWSResourceCleaner:
         for acl in acls:
             if acl.get('IsDefault'):
                 continue
-            if self.ask_confirmation("Network ACL", acl['NetworkAclId'], region):
+            if self.ask_confirmation("Network ACL", acl['NetworkAclId'], region, self.dry_run):
                 try:
                     client.delete_network_acl(NetworkAclId=acl['NetworkAclId'])
                 except Exception as e:
@@ -413,7 +419,7 @@ class AWSResourceCleaner:
                 try:
                     desc = kms_client.describe_key(KeyId=key['KeyId'])['KeyMetadata']
                     if desc['KeyManager'] == 'CUSTOMER' and desc['KeyState'] == 'Enabled':
-                        if self.ask_confirmation("KMS Key", key['KeyId'], region):
+                        if self.ask_confirmation("KMS Key", key['KeyId'], region, self.dry_run):
                             try:
                                 kms_client.schedule_key_deletion(KeyId=key['KeyId'], PendingWindowInDays=7)
                             except Exception as e:
@@ -473,12 +479,6 @@ class AWSResourceCleaner:
               help='Resource types to delete (can be specified multiple times). If not specified, all resource types will be deleted.')
 @click.option('--regions', '-rg', multiple=True, 
               help='Specific regions to process (default: all regions)')
-@click.option('--config', '-c', default='config.json', 
-              help='Configuration file path')
-@click.option('--dry-run', is_flag=True, 
-              help='Show what would be deleted without actually deleting')
-@click.option('--skip-defaults/--no-skip-defaults', default=True,
-              help='Skip default resources (default: True)')
 def main(resource_types, regions, config, dry_run, skip_defaults):
     """
     AWS Resource Cleaner - Delete AWS resources region by region with preservation rules
@@ -493,7 +493,7 @@ def main(resource_types, regions, config, dry_run, skip_defaults):
     if dry_run:
         logger.info("Running in DRY RUN mode - no resources will be deleted")
     
-    cleaner = AWSResourceCleaner(config_file=config, skip_defaults=skip_defaults)
+    cleaner = AWSResourceCleaner(config_file=config, skip_defaults=skip_defaults, dry_run=dry_run)
     
     # If no regions specified, use all regions
     regions_list = list(regions) if regions else None
