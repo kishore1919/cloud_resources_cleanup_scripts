@@ -1,3 +1,0 @@
-"""
-GCP Resources Package
-"""

@@ -8,10 +8,10 @@ This repository contains various utility scripts for cloud resource management.
 - `gcp_resources/` - Directory containing GCP resource management tools
   - `gcp_resource_lister.py` - Lists GCP resources (instances, VPCs, reserved IPs)
   - `gcp_resource_tool.py` - Wrapper for GCP resource management tools
-- `aws-resource-cleaner/` - Directory containing AWS resource management tools
+- `aws-resource/` - Directory containing AWS resource management tools
   - `aws_resource_cleaner.py` - Deletes AWS resources region by region, skipping defaults
   - `aws_resource_lister.py` - Lists AWS resources and exports to CSV
-- `aws_cleaup.toml` - TOML configuration file for AWS cleanup settings (regions and resources to enable/disable)
+  - `config.json` - JSON configuration file for AWS cleanup settings (excluded resources by region)
 
 ## Setup
 
@@ -151,25 +151,37 @@ python -m aws_resource_cleaner.aws_resource_lister -o my_resources.csv
 
 ### AWS Cleanup Configuration
 
-Use `aws_cleaup.toml` to control which regions and resources to process:
+Use `config.json` to specify resources to exclude from deletion. The configuration is a JSON object with an `excluded_resources` key containing regions and resource types to preserve.
 
-```toml
-[resources]
-mgn = true
-ecs = true
-rds = true
-elb = true
-ec2_instances = true
-ec2_other = true
-security_groups = true
-vpcs = true
-kms = true
+- Use `"all_regions"` to exclude resources across all regions.
+- Specify region names (e.g., `"us-east-1"`) to exclude resources only in that region.
+- Under each region, list resource types with arrays of resource IDs or names to preserve.
 
-[regions]
-us-east-1 = true
-us-east-2 = true
-# Set to false to skip a region
-ap-southeast-1 = false
+Example `config.json`:
+
+```json
+{
+  "excluded_resources": {
+    "all_regions": {
+      "ec2_instances": [
+        "i-1234567890abcdef0",
+        "i-0987654321fedcba0"
+      ],
+      "s3_buckets": [
+        "my-important-bucket",
+        "company-backups"
+      ]
+    },
+    "us-east-1": {
+      "lambda_functions": [
+        "critical-function-us-east-1"
+      ],
+      "rds_instances": [
+        "production-db"
+      ]
+    }
+  }
+}
 ```
 
 ## Authentication
