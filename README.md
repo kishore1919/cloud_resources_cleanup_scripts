@@ -1,17 +1,63 @@
 # Scripts
 
-This repository contains various utility scripts for cloud resource management.
+This repository contains various utility scripts for cloud resource management for both AWS and Google Cloud Platform (GCP).
+
+## Features
+
+- **Unified Interface**: Single entry point (`main.py`) for both AWS and GCP
+- **Comprehensive Resource Listing**: Supports major resource types across both platforms
+- **CSV Export**: All resources exported to structured CSV files
+- **Multi-Region Support**: Automatic region discovery and resource listing
+- **Credential Management**: Supports various authentication methods for both platforms
+- **Individual Script Access**: Direct execution of scripts without main interface
 
 ## Available Scripts
 
-- `main.py` - Main entry point for cloud resource management tools
+- `main.py` - Main entry point for cloud resource management tools (supports both AWS and GCP)
 - `gcp_resources/` - Directory containing GCP resource management tools
-  - `gcp_resource_lister.py` - Lists GCP resources (instances, VPCs, reserved IPs)
-  - `gcp_resource_tool.py` - Wrapper for GCP resource management tools
+  - `gcp_resource_lister.py` - Lists GCP resources (instances, VPCs, reserved IPs, disks, snapshots, storage buckets, Cloud Run services)
 - `aws-resource/` - Directory containing AWS resource management tools
-  - `aws_resource_cleaner.py` - Deletes AWS resources region by region, skipping defaults
-  - `aws_resource_lister.py` - Lists AWS resources and exports to CSV
-  - `config.json` - JSON configuration file for AWS cleanup settings (excluded resources by region)
+  - `aws_resource_lister.py` - Lists AWS resources and exports to CSV (EC2 instances, VPCs, S3 buckets, RDS instances, Lambda functions, etc.)
+
+## Project Structure
+
+```
+scripts/
+├── main.py                     # Unified CLI interface
+├── requirements.txt           # Python dependencies
+├── pyproject.toml            # Project configuration
+├── .gitignore               # Git ignore rules
+├── gcp_resources/
+│   └── gcp_resource_lister.py # GCP resource lister
+└── aws-resource/
+    └── aws_resource_lister.py  # AWS resource lister
+```
+
+## Quick Start
+
+Use the unified `main.py` interface for both cloud providers:
+
+```bash
+# GCP examples
+python main.py gcp list --project my-project-id
+python main.py gcp list --project my-project-id --instances-only
+
+# AWS examples  
+python main.py aws list
+python main.py aws list --resource-types ec2_instances s3_buckets
+```
+
+## Direct Script Usage
+
+You can also run the scripts directly without using `main.py`:
+
+```bash
+# Run GCP script directly
+python gcp_resources/gcp_resource_lister.py --project my-project-id
+
+# Run AWS script directly  
+python aws-resource/aws_resource_lister.py --instances-only --s3-only
+```
 
 ## Setup
 
@@ -84,105 +130,55 @@ The script provides detailed information for each resource type:
 
 ### Using the GCP resource tool directly:
 ```bash
-python -m gcp_resources.gcp_resource_tool list --project my-project-id
+python gcp_resources/gcp_resource_lister.py --project my-project-id
 ```
-
-Or run the package as a module:
-```bash
-python -m gcp_resources list --project my-project-id
-```
-
-### AWS Resource Cleaner
-
-The AWS resource cleaner deletes resources across regions, skipping default resources by default. It supports various AWS services and requires confirmation for each deletion.
-
-#### Clean all resources in all regions (skipping defaults):
-```bash
-python -m aws_resource_cleaner.aws_resource_cleaner
-```
-
-#### Clean specific resource types:
-```bash
-python -m aws_resource_cleaner.aws_resource_cleaner -r ec2_instances -r s3_buckets
-```
-
-#### Clean in specific regions:
-```bash
-python -m aws_resource_cleaner.aws_resource_cleaner --regions us-east-1 us-west-2
-```
-
-#### Dry run (show what would be deleted without deleting):
-```bash
-python -m aws_resource_cleaner.aws_resource_cleaner --dry-run
-```
-
-#### Include default resources (not recommended):
-```bash
-python -m aws_resource_cleaner.aws_resource_cleaner --no-skip-defaults
-```
-
-Supported resource types: ec2_instances, ec2_volumes, ec2_snapshots, s3_buckets, lambda_functions, rds_instances, ecs_clusters, elb, nat_gateways, eips, security_groups, vpcs, kms_keys
 
 ### AWS Resource Lister
 
-The AWS resource lister enumerates resources across regions and exports to CSV.
+The AWS resource lister enumerates resources across all regions and exports to CSV.
 
-#### List all resources in all regions:
+#### List all resources:
 ```bash
-python -m aws_resource_cleaner.aws_resource_lister
+python main.py aws list
 ```
 
 #### List specific resource types:
 ```bash
-python -m aws_resource_cleaner.aws_resource_lister -r ec2_instances -r s3_buckets
+python main.py aws list --resource-types ec2_instances s3_buckets
 ```
 
-#### List in specific regions:
+#### Available resource types:
+- `ec2_instances` - EC2 instances
+- `ec2_volumes` - EBS volumes  
+- `s3_buckets` - S3 buckets
+- `rds_instances` - RDS instances
+- `lambda_functions` - Lambda functions
+- `security_groups` - Security groups
+- `vpcs` - VPC networks
+
+#### Direct usage with individual script:
 ```bash
-python -m aws_resource_cleaner.aws_resource_lister --regions us-east-1 us-west-2
+# List all resources
+python aws-resource/aws_resource_lister.py
+
+# List only specific resource types
+python aws-resource/aws_resource_lister.py --instances-only --s3-only
+
+# Available flags:
+# --instances-only    List only EC2 instances
+# --vpcs-only         List only VPC networks  
+# --s3-only           List only S3 buckets
+# --rds-only          List only RDS instances
+# --lambda-only       List only Lambda functions
+# --security-groups-only  List only security groups
+# --volumes-only      List only EBS volumes
 ```
 
-#### Export to custom CSV file:
-```bash
-python -m aws_resource_cleaner.aws_resource_lister -o my_resources.csv
-```
-
-## Configuration
-
-### AWS Cleanup Configuration
-
-Use `config.json` to specify resources to exclude from deletion. The configuration is a JSON object with an `excluded_resources` key containing regions and resource types to preserve.
-
-- Use `"all_regions"` to exclude resources across all regions.
-- Specify region names (e.g., `"us-east-1"`) to exclude resources only in that region.
-- Under each region, list resource types with arrays of resource IDs or names to preserve.
-
-Example `config.json`:
-
-```json
-{
-  "excluded_resources": {
-    "all_regions": {
-      "ec2_instances": [
-        "i-1234567890abcdef0",
-        "i-0987654321fedcba0"
-      ],
-      "s3_buckets": [
-        "my-important-bucket",
-        "company-backups"
-      ]
-    },
-    "us-east-1": {
-      "lambda_functions": [
-        "critical-function-us-east-1"
-      ],
-      "rds_instances": [
-        "production-db"
-      ]
-    }
-  }
-}
-```
+**Notes**: 
+- The AWS lister scans all regions by default
+- Output is saved to `aws_inventory.csv` in the same directory as the script
+- Resources that don't have creation timestamps show 'N/A' in the output
+- Default AWS resources (like default VPCs) are automatically excluded from the output
 
 ## Authentication
 
@@ -205,5 +201,31 @@ Ensure AWS credentials are configured via:
 - Google Cloud SDK for GCP authentication
 - AWS CLI for AWS authentication
 - GCP libraries: `google-cloud-compute`, `google-cloud-resource-manager`, `google-cloud-storage`, `google-cloud-run`
-- AWS libraries: `boto3`
-- Proper IAM permissions to list/delete resources in the target cloud accounts
+- AWS libraries: `boto3`, `click`
+- Proper IAM permissions to list resources in the target cloud accounts
+
+## Output Format
+
+Both scripts export data to CSV files with the following structure:
+
+- **GCP**: `{project_id}_gcp_inventory.csv`
+- **AWS**: `aws_inventory.csv`
+
+The CSV files include resource type, name, creation time, and various resource-specific details.
+
+## Help Commands
+
+Get detailed help for any command:
+
+```bash
+# Main help
+python main.py --help
+
+# GCP help
+python main.py gcp --help
+python main.py gcp list --help
+
+# AWS help  
+python main.py aws --help
+python main.py aws list --help
+```

@@ -1,86 +1,574 @@
 #!/usr/bin/env python3
 """
-AWS Resource List - List all non-default AWS resources and export to a 
-simplified 7-column CSV (Region, ResourceType, ID, Name, State, Details, CreationDate)
+Script to list AWS resources: EC2 instances, VPCs, S3 buckets, RDS instances,
+Lambda functions, and many other AWS resources, and export them to ONE consolidated
+CSV file in the same directory as this script. The output includes the creation time for each resource.
 """
-import boto3
-import csv
-import json
-import click
-from typing import List, Dict, Any
-import logging
-from datetime import datetime
+
 import os
+import sys
+from typing import Dict, List, Any
+import argparse
+import csv
+from pathlib import Path
+import datetime
+import json
+import boto3
 
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+try:
+    import boto3
+except ImportError:
+    print("AWS Boto3 library not installed. Please install with:")
+    print("  pip install boto3")
+    sys.exit(1)
 
-# Define all available resource types
+try:
+    import click
+except ImportError:
+    print("Click library not installed. Please install with:")
+    print("  pip install click")
+    sys.exit(1)
+
+# Resource types supported by the AWS lister
 ALL_RESOURCE_TYPES = [
-    'ec2_instances', 'ec2_volumes', 'ec2_amis', 'ec2_snapshots', 'ec2_key_pairs',
-    's3_buckets', 'lambda_functions', 
-    'rds_instances', 'rds_snapshots',
-    'elastic_ips', 'security_groups', 'vpcs', 'subnets',
-    'route_tables', 'internet_gateways', 'nat_gateways',
-    'vpc_endpoints', 'network_acls', 'kms_keys', 'kms_aliases',
-    'load_balancers', 'target_groups', 'auto_scaling_groups',
-    'ecs_clusters', 'ecs_task_definitions', 
-    'ecs_services', 'ecs_tasks', # NEW detailed ECS checks
-    'iam_users', 'iam_groups'
+    'ec2_instances',
+    'ec2_volumes', 
+    'ec2_snapshots',
+    's3_buckets',
+    'lambda_functions',
+    'rds_instances',
+    'ecs_clusters',
+    'security_groups',
+    'vpcs'
 ]
 
-class AWSResourceLister:
+# Helper to format timestamps consistently
+def format_timestamp(ts: Any) -> str:
+    if isinstance(ts, datetime.datetime):
+        return ts.strftime('%Y-%m-%d %H:%M:%S')
+    elif isinstance(ts, str):
+        return ts
+    return 'N/A'
+
+def authenticate_aws() -> bool:
     """
-    A class to list non-default AWS resources across regions and export them to a simplified CSV.
-    All list_* functions return a list of dicts, where each dict has the following keys:
-    'Region', 'ResourceType', 'ID', 'Name', 'State', 'Details', 'CreationDate'
+    Authenticate to AWS using default credentials.
     """
+    try:
+        sts_client = boto3.client('sts')
+        sts_client.get_caller_identity()
+        return True
+    except Exception:
+        print("Warning: AWS credentials not found. Please configure AWS CLI or environment variables.")
+        return False
+
+# --- Resource Listing Functions ---
+
+def list_aws_instances() -> List[Dict[str, Any]]:
+    """List all EC2 instances across all regions."""
+    print("Listing AWS EC2 instances")
+    instances_list: List[Dict[str, Any]] = []
+
+    try:
+        ec2 = boto3.client('ec2', region_name='us-east-1')
+        regions = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+
+        for region in regions:
+            try:
+                ec2_client = boto3.client('ec2', region_name=region)
+                paginator = ec2_client.get_paginator('describe_instances')
+                
+                for page in paginator.paginate():
+                    for reservation in page['Reservations']:
+                        for instance in reservation['Instances']:
+                            if instance['State']['Name'] in ['terminated', 'terminating']:
+                                continue
+                            
+                            # Extract tags
+                            tags = instance.get('Tags', [])
+                            name = 'N/A'
+                            for tag in tags:
+                                if tag['Key'] == 'Name':
+                                    name = tag['Value']
+                                    break
+
+                            instance_info = {
+                                'name': name,
+                                'region': region,
+                                'status': instance['State']['Name'],
+                                'creation_time': format_timestamp(instance['LaunchTime']),
+                                'instance_type': instance['InstanceType'],
+                                'instance_id': instance['InstanceId'],
+                                'vpc_id': instance.get('VpcId', 'N/A'),
+                                'subnet_id': instance.get('SubnetId', 'N/A'),
+                                'private_ip': instance.get('PrivateIpAddress', 'N/A'),
+                                'public_ip': instance.get('PublicIpAddress', 'N/A'),
+                                'key_name': instance.get('KeyName', 'N/A'),
+                                'tags': ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags])
+                            }
+                            instances_list.append(instance_info)
+            except Exception as e:
+                print(f"Error listing instances in region {region}: {e}")
+                continue
+
+        print(f"Found {len(instances_list)} instances")
+        return instances_list
+    except Exception as e:
+        print(f"Error listing instances: {e}")
+        return []
+
+def list_aws_vpcs() -> List[Dict[str, Any]]:
+    """List all VPC networks across all regions."""
+    print("Listing AWS VPC networks")
+    vpcs_list: List[Dict[str, Any]] = []
+
+    try:
+        ec2 = boto3.client('ec2', region_name='us-east-1')
+        regions = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+
+        for region in regions:
+            try:
+                ec2_client = boto3.client('ec2', region_name=region)
+                response = ec2_client.describe_vpcs()
+                
+                for vpc in response['Vpcs']:
+                    if vpc.get('IsDefault', False):
+                        continue
+                    
+                    # Extract tags
+                    tags = vpc.get('Tags', [])
+                    name = 'N/A'
+                    for tag in tags:
+                        if tag['Key'] == 'Name':
+                            name = tag['Value']
+                            break
+
+                    vpc_info = {
+                        'name': name,
+                        'region': region,
+                        'vpc_id': vpc['VpcId'],
+                        'cidr_block': vpc['CidrBlock'],
+                        'state': vpc['State'],
+                        'creation_time': 'N/A', # VPCs don't have creation timestamp
+                        'description': vpc.get('Description', 'N/A'),
+                        'tags': ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags])
+                    }
+                    vpcs_list.append(vpc_info)
+            except Exception as e:
+                print(f"Error listing VPCs in region {region}: {e}")
+                continue
+
+        print(f"Found {len(vpcs_list)} VPC networks")
+        return vpcs_list
+    except Exception as e:
+        print(f"Error listing VPCs: {e}")
+        return []
+
+def list_aws_s3_buckets() -> List[Dict[str, Any]]:
+    """List all S3 buckets."""
+    print("Listing AWS S3 buckets")
+    buckets_list: List[Dict[str, Any]] = []
+
+    try:
+        s3_client = boto3.client('s3', region_name='us-east-1')
+        response = s3_client.list_buckets()
+        
+        for bucket in response['Buckets']:
+            try:
+                bucket_location = s3_client.get_bucket_location(Bucket=bucket['Name'])
+                region = bucket_location['LocationConstraint'] or 'us-east-1'
+                
+                # Get bucket tags
+                try:
+                    tagging = s3_client.get_bucket_tagging(Bucket=bucket['Name'])
+                    tags = ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tagging.get('TagSet', [])])
+                except:
+                    tags = 'N/A'
+
+                bucket_info = {
+                    'name': bucket['Name'],
+                    'region': region,
+                    'creation_time': format_timestamp(bucket['CreationDate']),
+                    'location': region,
+                    'bucket_id': bucket['Name'],
+                    'tags': tags
+                }
+                buckets_list.append(bucket_info)
+            except Exception as e:
+                print(f"Error getting details for bucket {bucket['Name']}: {e}")
+                continue
+
+        print(f"Found {len(buckets_list)} S3 buckets")
+        return buckets_list
+    except Exception as e:
+        print(f"Error listing S3 buckets: {e}")
+        return []
+
+def list_aws_rds_instances() -> List[Dict[str, Any]]:
+    """List all RDS instances across all regions."""
+    print("Listing AWS RDS instances")
+    rds_list: List[Dict[str, Any]] = []
+
+    try:
+        ec2 = boto3.client('ec2', region_name='us-east-1')
+        regions = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+
+        for region in regions:
+            try:
+                rds_client = boto3.client('rds', region_name=region)
+                paginator = rds_client.get_paginator('describe_db_instances')
+                
+                for page in paginator.paginate():
+                    for db_instance in page['DbInstances']:
+                        # Extract tags
+                        try:
+                            tags_response = rds_client.list_tags_for_resource(ResourceName=db_instance['DBInstanceArn'])
+                            tags = ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags_response.get('TagList', [])])
+                        except:
+                            tags = 'N/A'
+
+                        rds_info = {
+                            'name': db_instance['DBInstanceIdentifier'],
+                            'region': region,
+                            'status': db_instance['DBInstanceStatus'],
+                            'creation_time': format_timestamp(db_instance['InstanceCreateTime']),
+                            'db_instance_id': db_instance['DBInstanceIdentifier'],
+                            'engine': db_instance['Engine'],
+                            'engine_version': db_instance['EngineVersion'],
+                            'instance_class': db_instance['DBInstanceClass'],
+                            'storage_gb': db_instance['AllocatedStorage'],
+                            'vpc_id': db_instance.get('DBSubnetGroup', {}).get('VpcId', 'N/A'),
+                            'tags': tags
+                        }
+                        rds_list.append(rds_info)
+            except Exception as e:
+                print(f"Error listing RDS instances in region {region}: {e}")
+                continue
+
+        print(f"Found {len(rds_list)} RDS instances")
+        return rds_list
+    except Exception as e:
+        print(f"Error listing RDS instances: {e}")
+        return []
+
+def list_aws_lambda_functions() -> List[Dict[str, Any]]:
+    """List all Lambda functions across all regions."""
+    print("Listing AWS Lambda functions")
+    lambda_list: List[Dict[str, Any]] = []
+
+    try:
+        ec2 = boto3.client('ec2', region_name='us-east-1')
+        regions = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+
+        for region in regions:
+            try:
+                lambda_client = boto3.client('lambda', region_name=region)
+                paginator = lambda_client.get_paginator('list_functions')
+                
+                for page in paginator.paginate():
+                    for function in page['Functions']:
+                        # Get function tags
+                        try:
+                            tags_response = lambda_client.list_tags(Resource=function['FunctionArn'])
+                            tags = ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags_response.get('Tags', {}).items()])
+                        except:
+                            tags = 'N/A'
+
+                        lambda_info = {
+                            'name': function['FunctionName'],
+                            'region': region,
+                            'status': 'N/A', # Lambda doesn't have a simple status
+                            'creation_time': format_timestamp(function.get('LastModified', 'N/A')),
+                            'function_name': function['FunctionName'],
+                            'runtime': function['Runtime'],
+                            'handler': function['Handler'],
+                            'code_size_mb': round(function['CodeSize'] / 1024 / 1024, 2),
+                            'memory_mb': function['MemorySize'],
+                            'timeout_sec': function['Timeout'],
+                            'tags': tags
+                        }
+                        lambda_list.append(lambda_info)
+            except Exception as e:
+                print(f"Error listing Lambda functions in region {region}: {e}")
+                continue
+
+        print(f"Found {len(lambda_list)} Lambda functions")
+        return lambda_list
+    except Exception as e:
+        print(f"Error listing Lambda functions: {e}")
+        return []
+
+def list_aws_security_groups() -> List[Dict[str, Any]]:
+    """List all security groups across all regions."""
+    print("Listing AWS security groups")
+    sg_list: List[Dict[str, Any]] = []
+
+    try:
+        ec2 = boto3.client('ec2', region_name='us-east-1')
+        regions = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+
+        for region in regions:
+            try:
+                ec2_client = boto3.client('ec2', region_name=region)
+                paginator = ec2_client.get_paginator('describe_security_groups')
+                
+                for page in paginator.paginate():
+                    for sg in page['SecurityGroups']:
+                        if sg['GroupName'] == 'default':
+                            continue
+                        
+                        # Extract tags
+                        tags = sg.get('Tags', [])
+                        name = sg['GroupName']
+                        for tag in tags:
+                            if tag['Key'] == 'Name':
+                                name = tag['Value']
+                                break
+
+                        sg_info = {
+                            'name': name,
+                            'region': region,
+                            'status': 'N/A',
+                            'creation_time': 'N/A',
+                            'group_id': sg['GroupId'],
+                            'group_name': sg['GroupName'],
+                            'description': sg['Description'],
+                            'vpc_id': sg.get('VpcId', 'N/A'),
+                            'tags': ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags])
+                        }
+                        sg_list.append(sg_info)
+            except Exception as e:
+                print(f"Error listing security groups in region {region}: {e}")
+                continue
+
+        print(f"Found {len(sg_list)} security groups")
+        return sg_list
+    except Exception as e:
+        print(f"Error listing security groups: {e}")
+        return []
+
+def list_aws_volumes() -> List[Dict[str, Any]]:
+    """List all EBS volumes across all regions."""
+    print("Listing AWS EBS volumes")
+    volumes_list: List[Dict[str, Any]] = []
+
+    try:
+        ec2 = boto3.client('ec2', region_name='us-east-1')
+        regions = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+
+        for region in regions:
+            try:
+                ec2_client = boto3.client('ec2', region_name=region)
+                paginator = ec2_client.get_paginator('describe_volumes')
+                
+                for page in paginator.paginate():
+                    for volume in page['Volumes']:
+                        # Extract tags
+                        tags = volume.get('Tags', [])
+                        name = 'N/A'
+                        for tag in tags:
+                            if tag['Key'] == 'Name':
+                                name = tag['Value']
+                                break
+
+                        volume_info = {
+                            'name': name,
+                            'region': region,
+                            'status': volume['State'],
+                            'creation_time': format_timestamp(volume['CreateTime']),
+                            'volume_id': volume['VolumeId'],
+                            'size_gb': volume['Size'],
+                            'volume_type': volume['VolumeType'],
+                            'availability_zone': volume['AvailabilityZone'],
+                            'encrypted': volume['Encrypted'],
+                            'tags': ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags])
+                        }
+                        volumes_list.append(volume_info)
+            except Exception as e:
+                print(f"Error listing volumes in region {region}: {e}")
+                continue
+
+        print(f"Found {len(volumes_list)} EBS volumes")
+        return volumes_list
+    except Exception as e:
+        print(f"Error listing volumes: {e}")
+        return []
+
+# --- Print Functions ---
+
+def print_instances_table(instances: List[Dict[str, Any]]) -> None:
+    if not instances:
+        print("No instances found.")
+        return
+
+    print("\nInstances:")
+    print(f"{'Name':<30} {'Region':<15} {'Status':<12} {'Type':<15} {'ID':<15}")
+    print("-" * 87)
+
+    for instance in instances:
+        print(f"{instance['name']:<30} {instance['region']:<15} {instance['status']:<12} {instance['instance_type']:<15} {instance['instance_id']:<15}")
+
+def print_vpcs_table(vpcs: List[Dict[str, Any]]) -> None:
+    if not vpcs:
+        print("No VPCs found.")
+        return
+
+    print("\nVPCs:")
+    print(f"{'Name':<30} {'Region':<15} {'VPC ID':<15} {'CIDR Block':<15}")
+    print("-" * 75)
+
+    for vpc in vpcs:
+        print(f"{vpc['name']:<30} {vpc['region']:<15} {vpc['vpc_id']:<15} {vpc['cidr_block']:<15}")
+
+# --- CSV Write Function ---
+
+def write_csv(filepath: Path, rows: List[Dict[str, Any]]) -> None:
+    """
+    Write a list of dicts to a CSV file with all fields.
+    """
+    if not rows:
+        print(f"No data to write for {filepath.name}")
+        return
+
+    fieldnames_set = set()
+    for r in rows:
+        fieldnames_set.update(r.keys())
+    fieldnames = sorted(fieldnames_set)
+
+    # Prioritize key fields at the start of the CSV
+    for key in ['creation_time', 'name', 'resource_type']:
+        if key in fieldnames:
+            fieldnames.remove(key)
+            fieldnames.insert(0, key)
     
-    def __init__(self):
-        pass
+    # Reverse to get desired order
+    fieldnames.reverse()
 
-    # --- Helper Functions ---
+    try:
+        with filepath.open(mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                clean_row = {}
+                for k, v in row.items():
+                    if isinstance(v, (list, dict, set)):
+                        clean_row[k] = str(v)
+                    else:
+                        clean_row[k] = v
+                writer.writerow(clean_row)
+        print(f"Wrote CSV: {filepath}")
+    except Exception as e:
+        print(f"Error writing CSV {filepath}: {e}")
 
-    def _extract_name_from_tags(self, tags_list: List[Dict[str, str]]) -> str:
-        """Extracts 'Name' tag from a list of tag dicts."""
-        if not tags_list:
-            return 'N/A'
-        for tag in tags_list:
-            # Handle EC2/RDS tags (Keys: 'Key', 'Value')
-            if 'Key' in tag and tag['Key'].lower() == 'name':
-                return tag.get('Value', 'N/A')
-            # Handle ECS tags (Keys: 'key', 'value')
-            if 'key' in tag and tag['key'].lower() == 'name':
-                return tag.get('value', 'N/A')
-        return 'N/A'
+# --- Main Logic ---
 
-    def _get_tags_str_from_list(self, tags_list: List[Dict[str, str]]) -> str:
-        """Converts a list of tag dicts to a simple key=value string for details."""
-        if not tags_list:
-            return 'N/A'
-        try:
-            # Try EC2/RDS format
-            if 'Key' in tags_list[0]:
-                return ', '.join([f"{tag['Key']}={tag['Value']}" for tag in tags_list])
-            # Try ECS format
-            if 'key' in tags_list[0]:
-                 return ', '.join([f"{tag['key']}={tag['value']}" for tag in tags_list])
-        except Exception:
-            pass # Ignore malformed tags
-        return 'N/A'
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description='List AWS resources and export them to ONE consolidated CSV file.'
+    )
+    parser.add_argument('--instances-only', action='store_true',
+                        help='List only instances')
+    parser.add_argument('--vpcs-only', action='store_true',
+                        help='List only VPC networks')
+    parser.add_argument('--s3-only', action='store_true',
+                        help='List only S3 buckets')
+    parser.add_argument('--rds-only', action='store_true',
+                        help='List only RDS instances')
+    parser.add_argument('--lambda-only', action='store_true',
+                        help='List only Lambda functions')
+    parser.add_argument('--security-groups-only', action='store_true',
+                        help='List only security groups')
+    parser.add_argument('--volumes-only', action='store_true',
+                        help='List only EBS volumes')
 
-    # --- EC2 Service ---
+    args = parser.parse_args()
 
-    def get_all_regions(self) -> List[str]:
-        """Get all available AWS regions"""
-        ec2_client = boto3.client('ec2', region_name='us-east-1')
-        try:
-            response = ec2_client.describe_regions()
-            return [region['RegionName'] for region in response['Regions']]
-        except Exception as e:
-            logger.error(f"Error getting all regions: {e}")
-            return []
+    if not authenticate_aws():
+        print("Exiting due to authentication issues.")
+        return 1
+
+    all_resources_list: List[Dict[str, Any]] = []
+    separator = "\n" + "="*80 + "\n"
+
+    list_all = not any([
+        args.instances_only,
+        args.vpcs_only,
+        args.s3_only,
+        args.rds_only,
+        args.lambda_only,
+        args.security_groups_only,
+        args.volumes_only
+    ])
+
+    # --- Collect Data and Print Tables ---
+    
+    if list_all or args.instances_only:
+        instances = list_aws_instances()
+        if instances:
+            print_instances_table(instances)
+            for item in instances: item['resource_type'] = 'ec2_instance'
+            all_resources_list.extend(instances)
+        print(separator)
+
+    if list_all or args.vpcs_only:
+        vpcs = list_aws_vpcs()
+        if vpcs:
+            print_vpcs_table(vpcs)
+            for item in vpcs: item['resource_type'] = 'vpc'
+            all_resources_list.extend(vpcs)
+        print(separator)
+
+    if list_all or args.s3_only:
+        s3_buckets = list_aws_s3_buckets()
+        if s3_buckets:
+            for item in s3_buckets: item['resource_type'] = 's3_bucket'
+            all_resources_list.extend(s3_buckets)
+        print(separator)
+
+    if list_all or args.rds_only:
+        rds_instances = list_aws_rds_instances()
+        if rds_instances:
+            for item in rds_instances: item['resource_type'] = 'rds_instance'
+            all_resources_list.extend(rds_instances)
+        print(separator)
+
+    if list_all or args.lambda_only:
+        lambda_functions = list_aws_lambda_functions()
+        if lambda_functions:
+            for item in lambda_functions: item['resource_type'] = 'lambda_function'
+            all_resources_list.extend(lambda_functions)
+        print(separator)
+
+    if list_all or args.security_groups_only:
+        security_groups = list_aws_security_groups()
+        if security_groups:
+            for item in security_groups: item['resource_type'] = 'security_group'
+            all_resources_list.extend(security_groups)
+        print(separator)
+
+    if list_all or args.volumes_only:
+        volumes = list_aws_volumes()
+        if volumes:
+            for item in volumes: item['resource_type'] = 'ebs_volume'
+            all_resources_list.extend(volumes)
+        print(separator)
+
+    # --- CSV Output ---
+    script_dir = Path(__file__).resolve().parent
+    
+    # Generate timestamp for the filename: YYYYMMDD_HHMMSS
+    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    # Construct the output filename
+    output_file = script_dir / f'aws_inventory.csv'
+    
+    print(f"\nWriting all {len(all_resources_list)} resources to one file: {output_file.name}")
+    write_csv(output_file, all_resources_list)
+
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
     
     def list_ec2_instances(self, region: str) -> List[Dict[str, Any]]:
         logger.info(f"Listing EC2 instances in region: {region}")

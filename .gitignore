@@ -5,6 +5,108 @@ build/
 dist/
 wheels/
 *.egg-info
+*.pyc
+*.pyo
+*.pyd
+.Python
 
 # Virtual environments
+.*
 .venv
+venv/
+env/
+ENV/
+.conda/
+conda-meta/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Cloud credentials and sensitive files
+.credentials/
+aws-credentials
+gcp-credentials
+*.key
+*.pem
+*.p12
+service-account*.json
+credentials.json
+.token
+.aws/
+.gcp/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Generated CSV files and exports
+*.csv
+!aws_resources_simplified.csv
+!*.csv.example
+!README.md
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# pytest cache
+.pytest_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checking cache
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# Poetry
+poetry.lock
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+.tox/
+.nox/
+
+# Backup files
+*.bak
+*.backup
+*.old
